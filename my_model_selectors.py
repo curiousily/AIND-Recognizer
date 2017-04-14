@@ -1,10 +1,12 @@
 import math
 import statistics
 import warnings
+import operator
 
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, cross_val_score
+from sklearn.metrics import log_loss
 from asl_utils import combine_sequences
 
 
@@ -13,10 +15,12 @@ class ModelSelector(object):
     base class for model selection (strategy design pattern)
     '''
 
-    def __init__(self, all_word_sequences: dict, all_word_Xlengths: dict, this_word: str,
-                 n_constant=3,
-                 min_n_components=2, max_n_components=10,
-                 random_state=14, verbose=False):
+    def __init__(self, all_word_sequences: dict,
+            all_word_Xlengths: dict,
+            this_word: str,
+            n_constant=3,
+            min_n_components=2, max_n_components=10,
+            random_state=14, verbose=False):
         self.words = all_word_sequences
         self.hwords = all_word_Xlengths
         self.sequences = all_word_sequences[this_word]
@@ -30,6 +34,14 @@ class ModelSelector(object):
 
     def select(self):
         raise NotImplementedError
+
+    def fit_model(self, n_components, X, y):
+        model = GaussianHMM(n_components=n_components,
+                covariance_type="diag",
+                n_iter=1000, 
+                random_state=self.random_state,
+                verbose=False)
+        return model.fit(X, y)
 
     def base_model(self, num_states):
         # with warnings.catch_warnings():
@@ -104,5 +116,34 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        X, y = combine_sequences(range(len(self.sequences)), self.sequences)
+
+        if len(self.sequences) <= 2:
+            return self.fit_model(n_components=3, X=X, y=y)
+
+        kfold = KFold(n_splits=2)
+
+        scores = {}
+
+        for n_components in range(self.min_n_components,
+                                  self.max_n_components + 1):
+
+            cmp_scores = []
+            for train_idx, test_idx in kfold.split(self.sequences):
+
+                X_train, y_train = combine_sequences(train_idx, self.sequences)
+                X_test, y_test = combine_sequences(test_idx, self.sequences)
+                model = self.fit_model(n_components, X_train, y_train)
+                try:
+                    cmp_scores.append(model.score(X_test, y_test))
+                except:
+                    # Probably not a good model, skip it
+                    pass
+            if len(cmp_scores) > 0:
+                scores[n_components] = np.mean(cmp_scores)
+        if len(scores) == 0:
+            best_n_components = self.n_constant
+        else:
+            best_n_components = max(scores.items(),
+                                    key=operator.itemgetter(1))[0]
+        return self.fit_model(best_n_components, X, y)
