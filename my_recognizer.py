@@ -1,4 +1,5 @@
 import warnings
+import operator
 from asl_data import SinglesData
 
 
@@ -22,4 +23,17 @@ def recognize(models: dict, test_set: SinglesData):
     guesses = []
     # TODO implement the recognizer
     # return probabilities, guesses
-    raise NotImplementedError
+    # raise NotImplementedError
+
+    for X, y in test_set.get_all_Xlengths().values():
+        seq_probs = {}
+
+        for word, model in models.items():
+            try:
+                seq_probs[word] = model.score(X, y)
+            except:
+                seq_probs[word] = float('-inf')
+        probabilities.append(seq_probs)
+        guesses.append(max(seq_probs.items(), key=operator.itemgetter(1))[0])
+
+    return probabilities, guesses
