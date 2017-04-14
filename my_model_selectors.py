@@ -89,8 +89,21 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
 
+        scores = {}
+
+        for n_components in range(self.min_n_components,
+                                  self.max_n_components + 1):
+            model = self.fit_model(n_components, self.X, self.lengths)
+            try:
+                score = model.score(self.X, self.lengths)
+                BIC_score = -2 * score + n_components * np.log(sum(self.lengths))
+                scores[model] = BIC_score
+            except:
+                pass
+        if len(scores) == 0:
+            return None
+        return min(scores.items(), key=operator.itemgetter(1))[0]
 
 class SelectorDIC(ModelSelector):
     ''' select best model based on Discriminative Information Criterion
@@ -105,7 +118,26 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+
+        scores = {}
+
+        for n_components in range(self.min_n_components,
+                                  self.max_n_components + 1):
+            model = self.fit_model(n_components, self.X, self.lengths)
+            try:
+                score = model.score(self.X, self.lengths)
+                scores[n_components] = score
+            except:
+                pass
+
+        if len(scores) == 0:
+            return self.fit_model(self.n_constant, self.X, self.lengths)
+        else:
+            total_score = sum(scores.values())
+            M = len(scores) - 1
+            comp_idx = np.argmax([s - (total_score - s) / M for s in scores.values()])
+            best_n_components = list(scores.keys())[comp_idx]
+            return self.fit_model(best_n_components, self.X, self.lengths)
 
 
 class SelectorCV(ModelSelector):
@@ -121,7 +153,7 @@ class SelectorCV(ModelSelector):
         if len(self.sequences) <= 2:
             return self.fit_model(n_components=3, X=X, y=y)
 
-        kfold = KFold(n_splits=2)
+        kfold = KFold(n_splits=2, random_state=self.random_state)
 
         scores = {}
 
