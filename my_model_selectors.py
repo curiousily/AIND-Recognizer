@@ -1,12 +1,9 @@
-import math
-import statistics
 import warnings
 import operator
 
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
-from sklearn.model_selection import KFold, cross_val_score
-from sklearn.metrics import log_loss
+from sklearn.model_selection import KFold
 from asl_utils import combine_sequences
 
 
@@ -34,14 +31,6 @@ class ModelSelector(object):
 
     def select(self):
         raise NotImplementedError
-
-    def fit_model(self, n_components, X, y):
-        model = GaussianHMM(n_components=n_components,
-                covariance_type="diag",
-                n_iter=1000, 
-                random_state=self.random_state,
-                verbose=False)
-        return model.fit(X, y)
 
     def base_model(self, num_states):
         # with warnings.catch_warnings():
@@ -80,6 +69,21 @@ class SelectorBIC(ModelSelector):
     Bayesian information criteria: BIC = -2 * logL + p * logN
     """
 
+    def _bic_score(self, log_l, p, N):
+        return -2 * log_l + p * np.log(N)
+
+    def _num_params(self, n_states, n_features):
+        occupation_probs = n_states
+        transition_probs = n_states * (n_states - 1)
+        emission_probs = n_states * n_features * 2
+        return occupation_probs + transition_probs + emission_probs
+
+    def _get_best_n_components(self, scores):
+        if len(scores) == 0:
+            return self.n_constant
+        else:
+            return min(scores.items(), key=operator.itemgetter(1))[0]
+
     def select(self):
         """ select the best model for self.this_word based on
         BIC score for n between self.min_n_components and self.max_n_components
@@ -90,20 +94,21 @@ class SelectorBIC(ModelSelector):
 
         # TODO implement model selection based on BIC scores
 
+        N, n_features = self.X.shape
         scores = {}
 
         for n_components in range(self.min_n_components,
                                   self.max_n_components + 1):
-            model = self.fit_model(n_components, self.X, self.lengths)
+            model = self.base_model(n_components)
             try:
-                score = model.score(self.X, self.lengths)
-                BIC_score = -2 * score + n_components * np.log(sum(self.lengths))
-                scores[model] = BIC_score
+                s = model.score(self.X, self.lengths)
+                n_params = self._num_params(n_components, n_features)
+                scores[n_components] = self._bic_score(s, n_params, N)
             except:
                 pass
-        if len(scores) == 0:
-            return None
-        return min(scores.items(), key=operator.itemgetter(1))[0]
+        n_comps = self._get_best_n_components(scores)
+        return self.base_model(n_comps)
+
 
 class SelectorDIC(ModelSelector):
     ''' select best model based on Discriminative Information Criterion
@@ -114,6 +119,20 @@ class SelectorDIC(ModelSelector):
     DIC = log(P(X(i)) - 1/(M-1)SUM(log(P(X(all but i))
     '''
 
+    def _dic_score(self, log_p_i, log_p_sum, M):
+        log_p_all_but_i = log_p_sum - log_p_i
+        return log_p_i - log_p_all_but_i / (M - 1)
+
+    def _get_best_n_components(self, scores):
+        if len(scores) == 0:
+            return self.n_constant
+        else:
+            score_sum = sum(scores.values())
+            M = len(scores)
+            dic_scores = [self._dic_score(s, score_sum, M) for s in scores.values()]
+            comp_idx = np.argmax(dic_scores)
+            return list(scores.keys())[comp_idx]
+
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -123,21 +142,13 @@ class SelectorDIC(ModelSelector):
 
         for n_components in range(self.min_n_components,
                                   self.max_n_components + 1):
-            model = self.fit_model(n_components, self.X, self.lengths)
+            model = self.base_model(n_components)
             try:
-                score = model.score(self.X, self.lengths)
-                scores[n_components] = score
+                scores[n_components] = model.score(self.X, self.lengths)
             except:
                 pass
-
-        if len(scores) == 0:
-            return self.fit_model(self.n_constant, self.X, self.lengths)
-        else:
-            total_score = sum(scores.values())
-            M = len(scores) - 1
-            comp_idx = np.argmax([s - (total_score - s) / M for s in scores.values()])
-            best_n_components = list(scores.keys())[comp_idx]
-            return self.fit_model(best_n_components, self.X, self.lengths)
+        best_n_components = self._get_best_n_components(scores)
+        return self.base_model(best_n_components)
 
 
 class SelectorCV(ModelSelector):
@@ -145,13 +156,21 @@ class SelectorCV(ModelSelector):
 
     '''
 
+    def fit_model(self, n_components, X, y):
+        model = GaussianHMM(n_components=n_components,
+                covariance_type="diag",
+                n_iter=1000, 
+                random_state=self.random_state,
+                verbose=False)
+        return model.fit(X, y)
+
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         X, y = combine_sequences(range(len(self.sequences)), self.sequences)
 
-        if len(self.sequences) <= 2:
-            return self.fit_model(n_components=3, X=X, y=y)
+        if len(self.sequences) < 3:
+            return self.fit_model(n_components=self.n_constant, X=X, y=y)
 
         kfold = KFold(n_splits=2, random_state=self.random_state)
 
