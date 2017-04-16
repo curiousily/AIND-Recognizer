@@ -135,6 +135,7 @@ class SelectorDIC(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
 
         # TODO implement model selection based on DIC scores
 
@@ -167,10 +168,8 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        X, y = combine_sequences(range(len(self.sequences)), self.sequences)
-
         if len(self.sequences) < 3:
-            return self.fit_model(n_components=self.n_constant, X=X, y=y)
+            return self.base_model(self.n_constant)
 
         kfold = KFold(n_splits=2, random_state=self.random_state)
 
@@ -184,8 +183,8 @@ class SelectorCV(ModelSelector):
 
                 X_train, y_train = combine_sequences(train_idx, self.sequences)
                 X_test, y_test = combine_sequences(test_idx, self.sequences)
-                model = self.fit_model(n_components, X_train, y_train)
                 try:
+                    model = self.fit_model(n_components, X_train, y_train)
                     cmp_scores.append(model.score(X_test, y_test))
                 except:
                     # Probably not a good model, skip it
@@ -197,4 +196,4 @@ class SelectorCV(ModelSelector):
         else:
             best_n_components = max(scores.items(),
                                     key=operator.itemgetter(1))[0]
-        return self.fit_model(best_n_components, X, y)
+        return self.base_model(best_n_components)
